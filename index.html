@@ -12,7 +12,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
   <script>
@@ -65,7 +65,7 @@
         </div>
       </div>
       <div class="text-xs font-mono bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60">
-        <span id="syncStatus" class="text-amber-400">Başlatılıyor...</span>
+        <span id="syncStatus" class="text-slate-400">Bağlanıyor...</span>
       </div>
     </div>
   </header>
@@ -284,8 +284,7 @@
     function listenFirestore() {
       const syncEl = document.getElementById('syncStatus');
       if (!isFirebaseReady || !db) {
-        syncEl.textContent = 'Yerel Mod';
-        syncEl.className = 'text-slate-400';
+        syncEl.textContent = 'Çevrimdışı';
         loadLocalShipments();
         return;
       }
@@ -306,16 +305,21 @@
         syncEl.className = 'text-emerald-400 font-semibold';
         renderShipments();
       }, err => {
-        console.error("Firestore dinleme hatası:", err);
-        syncEl.textContent = 'Yerel Mod (Rules)';
-        syncEl.className = 'text-amber-400';
+        console.warn("Firestore dinleme:", err);
+        syncEl.textContent = 'Yerel Mod';
         loadLocalShipments();
       });
     }
 
     async function fetchCargoEvents(carrier, trackingNumber) {
       try {
-        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(trackingNumber)}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 sn zaman aşımı
+
+        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(trackingNumber)}`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
         if (!res.ok) return null;
         return await res.json();
       } catch (e) {
@@ -344,8 +348,6 @@
         }
         saveLocalShipments();
         renderShipments();
-      } else {
-        alert("Güncel hareket bilgisi resmi siteden anlık çekilemedi. Resmi sayfadan kontrol edebilirsiniz.");
       }
 
       if (btn) {
@@ -492,7 +494,6 @@
     const carrierSelect = document.getElementById('carrierSelect');
     const detectBadge = document.getElementById('detectBadge');
     const detectedName = document.getElementById('detectedName');
-    const submitBtn = document.getElementById('submitBtn');
 
     trackInput.addEventListener('input', (e) => {
       const code = e.target.value.trim();
@@ -518,16 +519,13 @@
       }
     });
 
-    document.getElementById('trackForm').addEventListener('submit', async (e) => {
+    document.getElementById('trackForm').addEventListener('submit', (e) => {
       e.preventDefault();
       const code = trackInput.value.trim();
       const carrier = carrierSelect.value;
       const title = document.getElementById('trackTitle').value.trim();
 
       if (!code) return;
-
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = `<i class="fa-solid fa-rotate animate-spin-custom"></i> Ekleniyor...`;
 
       const newId = 'pkg_' + Date.now();
       const newShipment = {
@@ -543,7 +541,7 @@
         ]
       };
 
-      // Önce hemen listeye ve yerel depoya ekle (donmayı ve gecikmeyi önler)
+      // ANINDA EKLE (Bekleme ve donma yok)
       shipments.unshift(newShipment);
       saveLocalShipments();
       renderShipments();
@@ -552,26 +550,24 @@
       document.getElementById('trackTitle').value = '';
       detectBadge.classList.add('hidden');
 
-      submitBtn.disabled = false;
-      submitBtn.innerHTML = `<i class="fa-solid fa-plus"></i> Takip Listesine Ekle`;
-
-      // Arka planda Firebase'e ve canlı hareketlere git
+      // Arka planda Firestore'a yaz
       if (db) {
         db.collection('kargolar').doc(newId).set(newShipment).catch(console.error);
       }
 
-      // Arka planda canlı hareket sorgula
-      const liveData = await fetchCargoEvents(carrier, code);
-      if (liveData && liveData.events && liveData.events.length > 0) {
-        newShipment.events = liveData.events;
-        newShipment.status = liveData.status || newShipment.status;
-        newShipment.lastUpdated = new Date().toISOString();
-        if (db) {
-          db.collection('kargolar').doc(newId).set(newShipment, { merge: true }).catch(console.error);
+      // Arka planda hareketleri çek ve kartı güncelle
+      fetchCargoEvents(carrier, code).then(liveData => {
+        if (liveData && liveData.events && liveData.events.length > 0) {
+          newShipment.events = liveData.events;
+          newShipment.status = liveData.status || newShipment.status;
+          newShipment.lastUpdated = new Date().toISOString();
+          if (db) {
+            db.collection('kargolar').doc(newId).set(newShipment, { merge: true }).catch(console.error);
+          }
+          saveLocalShipments();
+          renderShipments();
         }
-        saveLocalShipments();
-        renderShipments();
-      }
+      });
     });
 
     window.updateStatus = function(id, newStatus) {
@@ -614,7 +610,6 @@
       });
     });
 
-    // Başlat
     listenFirestore();
   </script>
 </body>
