@@ -269,50 +269,66 @@
 
     function loadLocalShipments() {
       try {
-        const stored = localStorage.getItem('kargo_listesi_stable');
+        const stored = localStorage.getItem('kargolar_kalici_liste');
         if (stored) {
           shipments = JSON.parse(stored);
-          renderShipments();
         }
       } catch (e) {}
     }
 
     function saveLocalShipments() {
-      localStorage.setItem('kargo_listesi_stable', JSON.stringify(shipments));
+      localStorage.setItem('kargolar_kalici_liste', JSON.stringify(shipments));
+    }
+
+    // Güvenli Firestore Kaydı (Undefined değerleri temizler)
+    function saveToFirestore(item) {
+      if (!db || !isFirebaseReady) return;
+      try {
+        const cleanItem = JSON.parse(JSON.stringify(item));
+        db.collection('kargolar').doc(item.id).set(cleanItem)
+          .then(() => console.log("Firestore'a başarıyla yazıldı:", item.id))
+          .catch(err => console.error("Firestore Yazma Hatası:", err));
+      } catch (e) {
+        console.error("Objeyi temizleme hatası:", e);
+      }
     }
 
     function listenFirestore() {
       const syncEl = document.getElementById('syncStatus');
+      loadLocalShipments();
+      renderShipments();
+
       if (!isFirebaseReady || !db) {
         syncEl.textContent = 'Yerel Mod';
-        loadLocalShipments();
         return;
       }
 
-      loadLocalShipments();
-
       db.collection('kargolar').onSnapshot(snap => {
-        const list = [];
+        const serverList = [];
         snap.forEach(doc => {
           const d = doc.data();
-          if (d && d.id) list.push(d);
+          if (d && d.id) serverList.push(d);
         });
 
-        list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        
-        // Eğer veritabanında veri varsa güncelle
-        if (list.length > 0) {
-          shipments = list;
-          saveLocalShipments();
+        // Eğer sunucuda kayıtlar varsa yerel ile birleştir (Yereldeki yeni kargoları ASLA ezme)
+        if (serverList.length > 0) {
+          const map = new Map();
+          serverList.forEach(item => map.set(item.id, item));
+          // Yerelde olup henüz sunucuya yansımamış olanları koru
+          shipments.forEach(item => {
+            if (!map.has(item.id)) map.set(item.id, item);
+          });
+          shipments = Array.from(map.values());
         }
-        
+
+        shipments.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        saveLocalShipments();
         syncEl.textContent = 'Senkronize ✓';
         syncEl.className = 'text-emerald-400 font-semibold';
         renderShipments();
       }, err => {
         console.warn("Firestore dinleme:", err);
         syncEl.textContent = 'Yerel Mod';
-        loadLocalShipments();
       });
     }
 
@@ -350,12 +366,7 @@
 
         saveLocalShipments();
         renderShipments();
-
-        if (db) {
-          // Temiz obje yazımı
-          const cleanItem = JSON.parse(JSON.stringify(item));
-          db.collection('kargolar').doc(id).set(cleanItem).catch(console.error);
-        }
+        saveToFirestore(item);
       }
 
       if (btn) {
@@ -443,186 +454,8 @@
             </div>
           </div>
 
-          <!-- Kargo Hareketleri (Otomatik Timeline) -->
+          <!-- Kargo Hareketleri -->
           <div class="bg-slate-900/80 rounded-xl p-3 border border-slate-800">
             <div class="flex items-center justify-between mb-2">
               <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> Kargo Hareketleri (${events.length})
-              </span>
-              ${item.lastUpdated ? `<span class="text-[10px] text-slate-500">Son Güncelleme: ${formatDate(item.lastUpdated)}</span>` : ''}
-            </div>
-
-            ${events.length === 0 ? `
-              <div class="py-2.5 text-center text-[11px] text-slate-500">
-                Henüz hareket işlenmedi. Sağ üstteki "Güncelle" butonuna basarak kargo hareketlerini çekebilirsiniz.
-              </div>
-            ` : `
-              <div class="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                ${events.slice().reverse().map(ev => `
-                  <div class="flex items-start gap-2.5 text-xs border-l-2 border-indigo-500 pl-2.5 py-1">
-                    <div class="flex-1">
-                      <div class="font-medium text-slate-200">${ev.detail || 'İşlem'}</div>
-                      ${ev.location ? `<div class="text-[10px] text-slate-400 flex items-center gap-1"><i class="fa-solid fa-location-dot text-[9px] text-slate-500"></i> ${ev.location}</div>` : ''}
-                    </div>
-                    <span class="text-[10px] text-slate-500 font-mono shrink-0">${formatDate(ev.date)}</span>
-                  </div>
-                `).join('')}
-              </div>
-            `}
-          </div>
-
-          <!-- Alt Çubuk -->
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-700/60 text-xs">
-            <div class="flex items-center gap-2">
-              <label class="text-[11px] text-slate-400">Durum:</label>
-              <select onchange="updateStatus('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-semibold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'} focus:outline-none">
-                <option value="transit" ${item.status === 'transit' ? 'selected' : ''}>🚚 Yolda / Transferde</option>
-                <option value="out_for_delivery" ${item.status === 'out_for_delivery' ? 'selected' : ''}>🛵 Dağıtıma Çıktı</option>
-                <option value="delivered" ${item.status === 'delivered' ? 'selected' : ''}>✅ Teslim Edildi</option>
-                <option value="exception" ${item.status === 'exception' ? 'selected' : ''}>⚠️ Beklemede / Sorun</option>
-              </select>
-            </div>
-
-            <a 
-              href="${officialUrl}" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700/80 hover:bg-slate-700 text-slate-200 rounded-xl font-semibold transition text-xs shadow-sm"
-            >
-              <span>Resmi Sitede Canlı Gör</span>
-              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-            </a>
-          </div>
-        `;
-        container.appendChild(card);
-      });
-    }
-
-    const trackInput = document.getElementById('trackNumber');
-    const carrierSelect = document.getElementById('carrierSelect');
-    const detectBadge = document.getElementById('detectBadge');
-    const detectedName = document.getElementById('detectedName');
-
-    trackInput.addEventListener('input', (e) => {
-      const code = e.target.value.trim();
-      const detected = detectCarrierSmart(code);
-      if (detected && CARRIERS[detected]) {
-        carrierSelect.value = detected;
-        detectedName.textContent = CARRIERS[detected].name;
-        detectBadge.classList.remove('hidden');
-      } else {
-        detectBadge.classList.add('hidden');
-      }
-    });
-
-    document.getElementById('pasteBtn').addEventListener('click', async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          trackInput.value = text.trim();
-          trackInput.dispatchEvent(new Event('input'));
-        }
-      } catch (err) {
-        alert("Pano okuma izni verilemedi, lütfen elle yapıştırın.");
-      }
-    });
-
-    document.getElementById('trackForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const code = trackInput.value.trim();
-      const carrier = carrierSelect.value;
-      const title = document.getElementById('trackTitle').value.trim();
-
-      if (!code) return;
-
-      const newId = 'pkg_' + Date.now();
-      const newShipment = {
-        id: newId,
-        trackingNumber: code,
-        carrier: carrier,
-        title: title || '',
-        status: 'transit',
-        createdAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-        events: [
-          { detail: "Kargo takibe alındı", location: "Sistem", date: new Date().toISOString() }
-        ]
-      };
-
-      // 1. Önce hem yerel hafızaya hem ekrana bas (Asla silinemez)
-      shipments.unshift(newShipment);
-      saveLocalShipments();
-      renderShipments();
-
-      trackInput.value = '';
-      document.getElementById('trackTitle').value = '';
-      detectBadge.classList.add('hidden');
-
-      // 2. Temiz obje olarak Firestore'a kaydet
-      if (db) {
-        const cleanObj = JSON.parse(JSON.stringify(newShipment));
-        db.collection('kargolar').doc(newId).set(cleanObj).catch(console.error);
-      }
-
-      // 3. Arka planda hareketleri çek ve güncelle
-      fetchCargoEvents(carrier, code).then(liveData => {
-        if (liveData && Array.isArray(liveData.events) && liveData.events.length > 0) {
-          newShipment.events = liveData.events;
-          newShipment.status = liveData.status || newShipment.status;
-          newShipment.lastUpdated = new Date().toISOString();
-
-          saveLocalShipments();
-          renderShipments();
-
-          if (db) {
-            const cleanUpdated = JSON.parse(JSON.stringify(newShipment));
-            db.collection('kargolar').doc(newId).set(cleanUpdated).catch(console.error);
-          }
-        }
-      });
-    });
-
-    window.updateStatus = function(id, newStatus) {
-      const item = shipments.find(s => s.id === id);
-      if (item) {
-        item.status = newStatus;
-        saveLocalShipments();
-        renderShipments();
-        if (db) {
-          db.collection('kargolar').doc(id).update({ status: newStatus }).catch(console.error);
-        }
-      }
-    };
-
-    window.deleteShipment = function(id) {
-      if (confirm('Bu kargoyu silmek istediğinize emin misiniz?')) {
-        shipments = shipments.filter(s => s.id !== id);
-        saveLocalShipments();
-        renderShipments();
-        if (db) {
-          db.collection('kargolar').doc(id).delete().catch(console.error);
-        }
-      }
-    };
-
-    window.copyToClipboard = function(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        alert("Takip numarası panoya kopyalandı: " + text);
-      });
-    };
-
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        document.querySelectorAll('.filter-btn').forEach(b => {
-          b.className = "filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]";
-        });
-        e.target.className = "filter-btn px-2.5 py-1 rounded-lg text-white font-medium bg-indigo-600 transition text-[11px]";
-        currentFilter = e.target.getAttribute('data-filter');
-        renderShipments();
-      });
-    });
-
-    listenFirestore();
-  </script>
-</body>
-</html>
+                <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> K
