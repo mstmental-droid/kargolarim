@@ -269,7 +269,7 @@
 
     function loadLocalShipments() {
       try {
-        const stored = localStorage.getItem('kargo_listesi_v2');
+        const stored = localStorage.getItem('kargo_listesi_stable');
         if (stored) {
           shipments = JSON.parse(stored);
           renderShipments();
@@ -278,13 +278,13 @@
     }
 
     function saveLocalShipments() {
-      localStorage.setItem('kargo_listesi_v2', JSON.stringify(shipments));
+      localStorage.setItem('kargo_listesi_stable', JSON.stringify(shipments));
     }
 
     function listenFirestore() {
       const syncEl = document.getElementById('syncStatus');
       if (!isFirebaseReady || !db) {
-        syncEl.textContent = 'Çevrimdışı';
+        syncEl.textContent = 'Yerel Mod';
         loadLocalShipments();
         return;
       }
@@ -293,9 +293,14 @@
 
       db.collection('kargolar').onSnapshot(snap => {
         const list = [];
-        snap.forEach(doc => list.push(doc.data()));
+        snap.forEach(doc => {
+          const d = doc.data();
+          if (d && d.id) list.push(d);
+        });
+
         list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         
+        // Eğer veritabanında veri varsa güncelle
         if (list.length > 0) {
           shipments = list;
           saveLocalShipments();
@@ -314,7 +319,7 @@
     async function fetchCargoEvents(carrier, trackingNumber) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 sn zaman aşımı
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
         const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(trackingNumber)}`, {
           signal: controller.signal
@@ -338,16 +343,19 @@
       }
 
       const result = await fetchCargoEvents(item.carrier, item.trackingNumber);
-      if (result && result.events && result.events.length > 0) {
+      if (result && Array.isArray(result.events) && result.events.length > 0) {
         item.events = result.events;
         item.status = result.status || item.status;
         item.lastUpdated = new Date().toISOString();
 
-        if (db) {
-          db.collection('kargolar').doc(id).set(item, { merge: true }).catch(console.error);
-        }
         saveLocalShipments();
         renderShipments();
+
+        if (db) {
+          // Temiz obje yazımı
+          const cleanItem = JSON.parse(JSON.stringify(item));
+          db.collection('kargolar').doc(id).set(cleanItem).catch(console.error);
+        }
       }
 
       if (btn) {
@@ -397,7 +405,7 @@
         card.className = "bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-lg flex flex-col gap-3.5 transition-all hover:border-slate-600";
 
         card.innerHTML = `
-          <!-- Üst Bar: Logo, Başlık, Takip Kodu, Silme -->
+          <!-- Üst Bar -->
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-center gap-3 min-w-0">
               <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${carrier.color} flex items-center justify-center text-white shrink-0 shadow-md">
@@ -463,7 +471,7 @@
             `}
           </div>
 
-          <!-- Alt Çubuk: Durum & Orijinal Web Sayfası -->
+          <!-- Alt Çubuk -->
           <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-700/60 text-xs">
             <div class="flex items-center gap-2">
               <label class="text-[11px] text-slate-400">Durum:</label>
@@ -537,11 +545,11 @@
         createdAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         events: [
-          { detail: "Kargo takibe eklendi", location: "Sistem", date: new Date().toISOString() }
+          { detail: "Kargo takibe alındı", location: "Sistem", date: new Date().toISOString() }
         ]
       };
 
-      // ANINDA EKLE (Bekleme ve donma yok)
+      // 1. Önce hem yerel hafızaya hem ekrana bas (Asla silinemez)
       shipments.unshift(newShipment);
       saveLocalShipments();
       renderShipments();
@@ -550,22 +558,26 @@
       document.getElementById('trackTitle').value = '';
       detectBadge.classList.add('hidden');
 
-      // Arka planda Firestore'a yaz
+      // 2. Temiz obje olarak Firestore'a kaydet
       if (db) {
-        db.collection('kargolar').doc(newId).set(newShipment).catch(console.error);
+        const cleanObj = JSON.parse(JSON.stringify(newShipment));
+        db.collection('kargolar').doc(newId).set(cleanObj).catch(console.error);
       }
 
-      // Arka planda hareketleri çek ve kartı güncelle
+      // 3. Arka planda hareketleri çek ve güncelle
       fetchCargoEvents(carrier, code).then(liveData => {
-        if (liveData && liveData.events && liveData.events.length > 0) {
+        if (liveData && Array.isArray(liveData.events) && liveData.events.length > 0) {
           newShipment.events = liveData.events;
           newShipment.status = liveData.status || newShipment.status;
           newShipment.lastUpdated = new Date().toISOString();
-          if (db) {
-            db.collection('kargolar').doc(newId).set(newShipment, { merge: true }).catch(console.error);
-          }
+
           saveLocalShipments();
           renderShipments();
+
+          if (db) {
+            const cleanUpdated = JSON.parse(JSON.stringify(newShipment));
+            db.collection('kargolar').doc(newId).set(cleanUpdated).catch(console.error);
+          }
         }
       });
     });
@@ -574,22 +586,22 @@
       const item = shipments.find(s => s.id === id);
       if (item) {
         item.status = newStatus;
+        saveLocalShipments();
+        renderShipments();
         if (db) {
           db.collection('kargolar').doc(id).update({ status: newStatus }).catch(console.error);
         }
-        saveLocalShipments();
-        renderShipments();
       }
     };
 
     window.deleteShipment = function(id) {
       if (confirm('Bu kargoyu silmek istediğinize emin misiniz?')) {
         shipments = shipments.filter(s => s.id !== id);
+        saveLocalShipments();
+        renderShipments();
         if (db) {
           db.collection('kargolar').doc(id).delete().catch(console.error);
         }
-        saveLocalShipments();
-        renderShipments();
       }
     };
 
