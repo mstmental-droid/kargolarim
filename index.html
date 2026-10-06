@@ -41,7 +41,7 @@
     }
   </style>
 </head>
-<body class="bg-[#0b1120] text-slate-100 min-h-screen flex flex-col font-sans pb-12">
+<body class="bg-[#0b1120] text-slate-100 min-h-screen flex flex-col font-sans pb-16">
 
   <!-- Header -->
   <header class="sticky top-0 z-30 bg-[#0b1120]/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3.5 sm:px-6">
@@ -110,3 +110,49 @@
                 <option value="surat">Sürat Kargo</option>
                 <option value="trendyol">Trendyol Express</option>
                 <option value="aras">Aras Kargo</option>
+                <option value="yurtici">Yurtiçi Kargo</option>
+                <option value="ptt">PTT Kargo</option>
+                <option value="dhl">DHL Express</option>
+              </select>
+              <i class="fa-solid fa-chevron-down absolute right-3 top-3 text-slate-500 text-[10px] pointer-events-none"></i>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Kargo Başlığı / Açıklama</label>
+            <input 
+              type="text" 
+              id="trackTitle" 
+              placeholder="Örn: Siparişim, Parça..." 
+              class="w-full bg-slate-900/90 border border-slate-700/80 text-slate-100 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+        </div>
+
+        <button 
+          type="submit" 
+          id="submitBtn"
+          class="w-full mt-1 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+        >
+          <i class="fa-solid fa-plus"></i> Takip Listesine Ekle
+        </button>
+      </form>
+    </div>
+
+    <!-- Filtreler -->
+    <div class="flex items-center justify-between mt-2">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+        <span>Kayıtlı Kargolar</span>
+        <span id="packageCount" class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full text-[10px] border border-slate-700">0</span>
+      </h3>
+      <div class="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs">
+        <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-lg text-white font-medium bg-indigo-600 transition text-[11px]">Tümü</button>
+        <button data-filter="active" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]">Yoldakiler</button>
+        <button data-filter="delivered" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]">Teslim Edildi</button>
+      </div>
+    </div>
+
+    <!-- Kargo Listesi -->
+    <div id="shipmentList" class="flex flex-col gap-3.5">
+      <div id="emptyState" class="py-12 flex flex-col items-center justify-center text-center px-4 border border-dashed border-slate-800 rounded-2xl">
+        <div class="w-14 h-14 rounded-full bg-slate-800/80 flex items-center justify-center text-slate-600 mb
