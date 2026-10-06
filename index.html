@@ -127,7 +127,7 @@
             <input 
               type="text" 
               id="trackTitle" 
-              placeholder="Örn: Siparişim, Parça..." 
+              placeholder="Örn: Siparişim, Malzeme..." 
               class="w-full bg-slate-900/90 border border-slate-700/80 text-slate-100 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
@@ -314,7 +314,7 @@
         if (cloudItems.length > 0) {
           const map = new Map();
           cloudItems.forEach(i => map.set(i.id, i));
-          // Yerelde olup henüz buluta gitmemiş kargoları koru
+          // Yerelde olup sunucuya henüz gitmemiş olanları koru
           shipments.forEach(i => {
             if (!map.has(i.id)) map.set(i.id, i);
           });
@@ -356,20 +356,27 @@
         btn.disabled = true;
       }
 
-      const res = await fetchFromWorker(item.carrier, item.trackingNumber);
-      if (res && Array.isArray(res.events) && res.events.length > 0) {
-        item.events = res.events;
-        item.status = res.status || item.status;
-        item.lastUpdated = new Date().toISOString();
+      try {
+        const res = await fetchFromWorker(item.carrier, item.trackingNumber);
+        if (res && Array.isArray(res.events) && res.events.length > 0) {
+          item.events = res.events;
+          item.status = res.status || item.status;
+          item.lastUpdated = new Date().toISOString();
 
-        saveLocal();
-        renderShipments();
-        syncToCloud(item);
-      }
-
-      if (btn) {
-        btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Güncelle`;
-        btn.disabled = false;
+          saveLocal();
+          renderShipments();
+          syncToCloud(item);
+        } else {
+          alert("Kargo sitesinden yeni hareket bilgisi alınamadı.");
+        }
+      } catch (e) {
+        console.warn("Güncelleme hatası:", e);
+      } finally {
+        // Asla takılı kalmaz, butonu her durumda eski haline döndürür
+        if (btn) {
+          btn.innerHTML = `<i class="fa-solid fa-rotate"></i> <span class="hidden sm:inline">Güncelle</span>`;
+          btn.disabled = false;
+        }
       }
     };
 
@@ -378,252 +385,4 @@
       if (typeof raw === 'string' && raw.length < 25 && !raw.includes('T')) return raw;
       const d = new Date(raw);
       if (isNaN(d.getTime())) return raw;
-      return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    }
-
-    function renderShipments() {
-      const container = document.getElementById('shipmentList');
-      const emptyState = document.getElementById('emptyState');
-      const countEl = document.getElementById('packageCount');
-
-      const filtered = shipments.filter(item => {
-        if (currentFilter === 'active') return item.status !== 'delivered';
-        if (currentFilter === 'delivered') return item.status === 'delivered';
-        return true;
-      });
-
-      countEl.textContent = filtered.length;
-
-      if (filtered.length === 0) {
-        container.innerHTML = '';
-        container.appendChild(emptyState);
-        emptyState.classList.remove('hidden');
-        return;
-      }
-
-      emptyState.classList.add('hidden');
-      container.innerHTML = '';
-
-      filtered.forEach(item => {
-        const carrier = CARRIERS[item.carrier] || CARRIERS.hepsijet;
-        const officialUrl = carrier.getUrl(item.trackingNumber);
-        const events = Array.isArray(item.events) ? item.events : [];
-        const isDelivered = item.status === 'delivered';
-
-        const card = document.createElement('div');
-        card.className = "bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-lg flex flex-col gap-3.5 transition-all hover:border-slate-600";
-
-        card.innerHTML = `
-          <!-- Üst Başlık & Eylemler -->
-          <div class="flex items-start justify-between gap-3">
-            <div class="flex items-center gap-3 min-w-0">
-              <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${carrier.color} flex items-center justify-center text-white shrink-0 shadow-md">
-                <i class="${carrier.icon} text-lg"></i>
-              </div>
-              <div class="min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <h4 class="font-bold text-sm text-slate-100 truncate">${item.title || carrier.name}</h4>
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${carrier.badge}">
-                    ${carrier.name}
-                  </span>
-                </div>
-                <div class="flex items-center gap-2 mt-0.5">
-                  <span class="font-mono text-xs text-indigo-400 font-semibold select-all">${item.trackingNumber}</span>
-                  <button onclick="copyToClipboard('${item.trackingNumber}')" class="text-slate-500 hover:text-slate-300 text-xs" title="Takip No Kopyala">
-                    <i class="fa-regular fa-copy"></i>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button 
-                id="ref-btn-${item.id}"
-                onclick="refreshCargo('${item.id}')" 
-                class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
-                title="Resmi siteden kargo hareketlerini çek"
-              >
-                <i class="fa-solid fa-rotate"></i>
-                <span class="hidden sm:inline">Güncelle</span>
-              </button>
-              <button onclick="deleteShipment('${item.id}')" class="text-slate-500 hover:text-rose-400 p-2 text-sm transition" title="Sil">
-                <i class="fa-regular fa-trash-can"></i>
-              </button>
-            </div>
-          </div>
-
-          <!-- Kargo Hareketleri Kutusu -->
-          <div class="bg-slate-900/80 rounded-xl p-3 border border-slate-800">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> Kargo Hareketleri (${events.length})
-              </span>
-              ${item.lastUpdated ? `<span class="text-[10px] text-slate-500">Son Güncelleme: ${formatDate(item.lastUpdated)}</span>` : ''}
-            </div>
-
-            ${events.length === 0 ? `
-              <div class="py-2 text-center text-[11px] text-slate-500">
-                Hareketler henüz alınmadı. Yukarıdaki "Güncelle" butonuna basabilirsiniz.
-              </div>
-            ` : `
-              <div class="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                ${events.slice().reverse().map(ev => `
-                  <div class="flex items-start gap-2.5 text-xs border-l-2 border-indigo-500 pl-2.5 py-1">
-                    <div class="flex-1">
-                      <div class="font-medium text-slate-200">${ev.detail || 'İşlem'}</div>
-                      ${ev.location ? `<div class="text-[10px] text-slate-400 flex items-center gap-1"><i class="fa-solid fa-location-dot text-[9px] text-slate-500"></i> ${ev.location}</div>` : ''}
-                    </div>
-                    <span class="text-[10px] text-slate-500 font-mono shrink-0">${formatDate(ev.date)}</span>
-                  </div>
-                `).join('')}
-              </div>
-            `}
-          </div>
-
-          <!-- Alt Çubuk -->
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-700/60 text-xs">
-            <div class="flex items-center gap-2">
-              <label class="text-[11px] text-slate-400">Durum:</label>
-              <select onchange="updateStatus('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-semibold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'} focus:outline-none">
-                <option value="transit" ${item.status === 'transit' ? 'selected' : ''}>🚚 Yolda / Transferde</option>
-                <option value="out_for_delivery" ${item.status === 'out_for_delivery' ? 'selected' : ''}>🛵 Dağıtıma Çıktı</option>
-                <option value="delivered" ${item.status === 'delivered' ? 'selected' : ''}>✅ Teslim Edildi</option>
-                <option value="exception" ${item.status === 'exception' ? 'selected' : ''}>⚠️ Beklemede / Sorun</option>
-              </select>
-            </div>
-
-            <a 
-              href="${officialUrl}" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700/80 hover:bg-slate-700 text-slate-200 rounded-xl font-semibold transition text-xs shadow-sm"
-            >
-              <span>Resmi Sitede Canlı Gör</span>
-              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-            </a>
-          </div>
-        `;
-        container.appendChild(card);
-      });
-    }
-
-    const trackInput = document.getElementById('trackNumber');
-    const carrierSelect = document.getElementById('carrierSelect');
-    const detectBadge = document.getElementById('detectBadge');
-    const detectedName = document.getElementById('detectedName');
-
-    trackInput.addEventListener('input', (e) => {
-      const code = e.target.value.trim();
-      const detected = detectCarrierSmart(code);
-      if (detected && CARRIERS[detected]) {
-        carrierSelect.value = detected;
-        detectedName.textContent = CARRIERS[detected].name;
-        detectBadge.classList.remove('hidden');
-      } else {
-        detectBadge.classList.add('hidden');
-      }
-    });
-
-    document.getElementById('pasteBtn').addEventListener('click', async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          trackInput.value = text.trim();
-          trackInput.dispatchEvent(new Event('input'));
-        }
-      } catch (err) {
-        alert("Pano izni verilemedi, lütfen elle yapıştırın.");
-      }
-    });
-
-    // Form Gönderme: KESİNTİSİZ & ANINDA EKLEME
-    document.getElementById('trackForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const code = trackInput.value.trim();
-      const carrier = carrierSelect.value;
-      const title = document.getElementById('trackTitle').value.trim();
-
-      if (!code) return;
-
-      const newId = 'pkg_' + Date.now();
-      const newShipment = {
-        id: newId,
-        trackingNumber: code,
-        carrier: carrier,
-        title: title || '',
-        status: 'transit',
-        createdAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-        events: [
-          { detail: "Kargo takibe eklendi", location: "Sistem", date: new Date().toISOString() }
-        ]
-      };
-
-      // 1. ANINDA ARAYÜZE VE YEREL HAFIZAYA EKLE (Asla takılamaz)
-      shipments.unshift(newShipment);
-      saveLocal();
-      renderShipments();
-
-      // Formu temizle
-      trackInput.value = '';
-      document.getElementById('trackTitle').value = '';
-      detectBadge.classList.add('hidden');
-
-      // 2. Arka planda Firestore'a yaz
-      syncToCloud(newShipment);
-
-      // 3. Arka planda kargo hareketlerini sorgula
-      fetchFromWorker(carrier, code).then(live => {
-        if (live && Array.isArray(live.events) && live.events.length > 0) {
-          newShipment.events = live.events;
-          newShipment.status = live.status || newShipment.status;
-          newShipment.lastUpdated = new Date().toISOString();
-
-          saveLocal();
-          renderShipments();
-          syncToCloud(newShipment);
-        }
-      });
-    });
-
-    window.updateStatus = function(id, newStatus) {
-      const item = shipments.find(s => s.id === id);
-      if (item) {
-        item.status = newStatus;
-        saveLocal();
-        renderShipments();
-        syncToCloud(item);
-      }
-    };
-
-    window.deleteShipment = function(id) {
-      if (confirm('Bu kargoyu silmek istediğinize emin misiniz?')) {
-        shipments = shipments.filter(s => s.id !== id);
-        saveLocal();
-        renderShipments();
-        deleteFromCloud(id);
-      }
-    };
-
-    window.copyToClipboard = function(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        alert("Takip numarası kopyalandı: " + text);
-      });
-    };
-
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        document.querySelectorAll('.filter-btn').forEach(b => {
-          b.className = "filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]";
-        });
-        e.target.className = "filter-btn px-2.5 py-1 rounded-lg text-white font-medium bg-indigo-600 transition text-[11px]";
-        currentFilter = e.target.getAttribute('data-filter');
-        renderShipments();
-      });
-    });
-
-    // Başlat
-    initSync();
-  </script>
-</body>
-</html>
+      return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year
