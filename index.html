@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Kargolarım - Akıllı Takip</title>
+  <title>Kargolarım - Canlı Takip</title>
   
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -12,7 +12,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
   <script>
@@ -41,7 +41,7 @@
     }
   </style>
 
-  <!-- Firebase Compat SDK -->
+  <!-- Firebase Scripts -->
   <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
 </head>
@@ -61,11 +61,11 @@
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Canlı Servis
             </span>
           </h1>
-          <p class="text-xs text-slate-400">Çoklu Kargo Takip & Otomatik Hareketler</p>
+          <p class="text-xs text-slate-400">Çoklu Kargo Takip & Hareket Geçmişi</p>
         </div>
       </div>
       <div class="text-xs font-mono bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60">
-        <span id="syncStatus" class="text-slate-400">Bağlanıyor...</span>
+        <span id="syncStatus" class="text-amber-400">Başlatılıyor...</span>
       </div>
     </div>
   </header>
@@ -109,4 +109,513 @@
           <div>
             <label class="block text-xs font-medium text-slate-400 mb-1">Kargo Şirketi</label>
             <div class="relative">
-              <select id="carrierSelect" class="w-full bg-slate-900/90 border border-slate-700/80 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2.5 pr-8 focus:outline-none focus:border
+              <select id="carrierSelect" class="w-full bg-slate-900/90 border border-slate-700/80 text-slate-200 text-xs font-semibold rounded-xl px-3 py-2.5 pr-8 focus:outline-none focus:border-indigo-500 appearance-none">
+                <option value="hepsijet">HepsiJET</option>
+                <option value="aras">Aras Kargo</option>
+                <option value="surat">Sürat Kargo</option>
+                <option value="yurtici">Yurtiçi Kargo</option>
+                <option value="trendyol">Trendyol Express</option>
+                <option value="ptt">PTT Kargo</option>
+                <option value="dhl">DHL Express</option>
+              </select>
+              <i class="fa-solid fa-chevron-down absolute right-3 top-3 text-slate-500 text-[10px] pointer-events-none"></i>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Kargo Başlığı / Açıklama</label>
+            <input 
+              type="text" 
+              id="trackTitle" 
+              placeholder="Örn: 18650 Piller, Mini PC Parçası..." 
+              class="w-full bg-slate-900/90 border border-slate-700/80 text-slate-100 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+        </div>
+
+        <button 
+          type="submit" 
+          id="submitBtn"
+          class="w-full mt-1 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+        >
+          <i class="fa-solid fa-plus"></i> Takip Listesine Ekle
+        </button>
+      </form>
+    </div>
+
+    <!-- Filtreler -->
+    <div class="flex items-center justify-between mt-2">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+        <span>Kayıtlı Kargolar</span>
+        <span id="packageCount" class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full text-[10px] border border-slate-700">0</span>
+      </h3>
+      <div class="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs">
+        <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-lg text-white font-medium bg-indigo-600 transition text-[11px]">Tümü</button>
+        <button data-filter="active" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]">Yoldakiler</button>
+        <button data-filter="delivered" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]">Teslim Edildi</button>
+      </div>
+    </div>
+
+    <!-- Kargo Listesi -->
+    <div id="shipmentList" class="flex flex-col gap-3.5">
+      <div id="emptyState" class="py-12 flex flex-col items-center justify-center text-center px-4 border border-dashed border-slate-800 rounded-2xl">
+        <div class="w-14 h-14 rounded-full bg-slate-800/80 flex items-center justify-center text-slate-600 mb-3">
+          <i class="fa-solid fa-box text-2xl"></i>
+        </div>
+        <p class="text-sm font-semibold text-slate-400">Henüz kayıtlı kargo bulunmuyor</p>
+        <p class="text-xs text-slate-500 mt-1 max-w-xs">Yukarıdaki formdan takip numaranızı girerek kargonuzu kaydedebilirsiniz.</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const WORKER_URL = "https://crimson-mode-a7c6.mstmental.workers.dev";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDbG02kMHx8NH9Nab2gUWX35uGbOdgbXe4",
+      authDomain: "kargolarim-app.firebaseapp.com",
+      projectId: "kargolarim-app",
+      storageBucket: "kargolarim-app.firebasestorage.app",
+      messagingSenderId: "780260727059",
+      appId: "1:780260727059:web:424eeaa7b78785167ca2e6"
+    };
+
+    let db = null;
+    let isFirebaseReady = false;
+
+    try {
+      if (typeof firebase !== 'undefined') {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        isFirebaseReady = true;
+      }
+    } catch (e) {
+      console.warn("Firebase başlatılamadı:", e);
+    }
+
+    const CARRIERS = {
+      hepsijet: {
+        name: "HepsiJET",
+        color: "from-orange-500 to-amber-600",
+        badge: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+        icon: "fa-solid fa-bolt",
+        getUrl: (num) => `https://hepsijet.com/gonderi-takibi/${encodeURIComponent(num)}`
+      },
+      aras: {
+        name: "Aras Kargo",
+        color: "from-sky-500 to-blue-600",
+        badge: "bg-sky-500/20 text-sky-400 border-sky-500/30",
+        icon: "fa-solid fa-paper-plane",
+        getUrl: (num) => `https://kargotakip.araskargo.com.tr/mainpage.aspx?code=${encodeURIComponent(num)}`
+      },
+      surat: {
+        name: "Sürat Kargo",
+        color: "from-red-500 to-rose-600",
+        badge: "bg-red-500/20 text-red-400 border-red-500/30",
+        icon: "fa-solid fa-gauge-high",
+        getUrl: (num) => `https://suratkargo.com.tr/KargoTakip/?kargotakipno=${encodeURIComponent(num)}`
+      },
+      yurtici: {
+        name: "Yurtiçi Kargo",
+        color: "from-amber-500 to-yellow-600",
+        badge: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+        icon: "fa-solid fa-truck-fast",
+        getUrl: (num) => `https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code=${encodeURIComponent(num)}`
+      },
+      trendyol: {
+        name: "Trendyol Express",
+        color: "from-amber-600 to-orange-600",
+        badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+        icon: "fa-solid fa-bag-shopping",
+        getUrl: (num) => `https://kargotakip.trendyol.com/?trackingCode=${encodeURIComponent(num)}`
+      },
+      ptt: {
+        name: "PTT Kargo",
+        color: "from-yellow-500 to-amber-600",
+        badge: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+        icon: "fa-solid fa-envelope",
+        getUrl: (num) => `https://gonderitakip.ptt.gov.tr/Track/Verify?q=${encodeURIComponent(num)}`
+      },
+      dhl: {
+        name: "DHL Express",
+        color: "from-yellow-600 to-red-600",
+        badge: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+        icon: "fa-solid fa-plane-departure",
+        getUrl: (num) => `https://www.dhl.com/tr-tr/home/tracking/tracking-express.html?submit=1&tracking-id=${encodeURIComponent(num)}`
+      }
+    };
+
+    function detectCarrierSmart(rawCode) {
+      const code = String(rawCode || '').trim().toUpperCase();
+      if (!code) return null;
+
+      if (code.startsWith('KP') || code.startsWith('RR') || code.startsWith('CP')) return 'ptt';
+      if (code.startsWith('HJ') || code.startsWith('HX') || code.includes('JET')) return 'hepsijet';
+      if (code.startsWith('TY') || code.startsWith('TEX') || code.startsWith('TND')) return 'trendyol';
+      if (code.startsWith('SRT')) return 'surat';
+
+      if (code.startsWith('6275') || code.startsWith('62')) return 'hepsijet';
+      if (/^2\d{12}$/.test(code)) return 'ptt';
+      if (/^\d{10}$/.test(code)) return 'dhl';
+      if (/^\d{12}$/.test(code)) return 'yurtici';
+      if (code.startsWith('65') || code.startsWith('33') || code.startsWith('22')) return 'aras';
+      if (code.startsWith('56') || /^\d{11}$/.test(code)) return 'surat';
+
+      return null;
+    }
+
+    let shipments = [];
+    let currentFilter = 'all';
+
+    function loadLocalShipments() {
+      try {
+        const stored = localStorage.getItem('kargo_listesi_v2');
+        if (stored) {
+          shipments = JSON.parse(stored);
+          renderShipments();
+        }
+      } catch (e) {}
+    }
+
+    function saveLocalShipments() {
+      localStorage.setItem('kargo_listesi_v2', JSON.stringify(shipments));
+    }
+
+    function listenFirestore() {
+      const syncEl = document.getElementById('syncStatus');
+      if (!isFirebaseReady || !db) {
+        syncEl.textContent = 'Yerel Mod';
+        syncEl.className = 'text-slate-400';
+        loadLocalShipments();
+        return;
+      }
+
+      loadLocalShipments();
+
+      db.collection('kargolar').onSnapshot(snap => {
+        const list = [];
+        snap.forEach(doc => list.push(doc.data()));
+        list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        
+        if (list.length > 0) {
+          shipments = list;
+          saveLocalShipments();
+        }
+        
+        syncEl.textContent = 'Senkronize ✓';
+        syncEl.className = 'text-emerald-400 font-semibold';
+        renderShipments();
+      }, err => {
+        console.error("Firestore dinleme hatası:", err);
+        syncEl.textContent = 'Yerel Mod (Rules)';
+        syncEl.className = 'text-amber-400';
+        loadLocalShipments();
+      });
+    }
+
+    async function fetchCargoEvents(carrier, trackingNumber) {
+      try {
+        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(trackingNumber)}`);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    window.refreshCargo = async function(id) {
+      const item = shipments.find(s => s.id === id);
+      if (!item) return;
+
+      const btn = document.getElementById(`ref-btn-${id}`);
+      if (btn) {
+        btn.innerHTML = `<i class="fa-solid fa-rotate animate-spin-custom"></i>`;
+        btn.disabled = true;
+      }
+
+      const result = await fetchCargoEvents(item.carrier, item.trackingNumber);
+      if (result && result.events && result.events.length > 0) {
+        item.events = result.events;
+        item.status = result.status || item.status;
+        item.lastUpdated = new Date().toISOString();
+
+        if (db) {
+          db.collection('kargolar').doc(id).set(item, { merge: true }).catch(console.error);
+        }
+        saveLocalShipments();
+        renderShipments();
+      } else {
+        alert("Güncel hareket bilgisi resmi siteden anlık çekilemedi. Resmi sayfadan kontrol edebilirsiniz.");
+      }
+
+      if (btn) {
+        btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Güncelle`;
+        btn.disabled = false;
+      }
+    };
+
+    function formatDate(raw) {
+      if (!raw) return '';
+      if (typeof raw === 'string' && raw.length < 25 && !raw.includes('T')) return raw;
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return raw;
+      return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function renderShipments() {
+      const container = document.getElementById('shipmentList');
+      const emptyState = document.getElementById('emptyState');
+      const countEl = document.getElementById('packageCount');
+
+      const filtered = shipments.filter(item => {
+        if (currentFilter === 'active') return item.status !== 'delivered';
+        if (currentFilter === 'delivered') return item.status === 'delivered';
+        return true;
+      });
+
+      countEl.textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        container.innerHTML = '';
+        container.appendChild(emptyState);
+        emptyState.classList.remove('hidden');
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+      container.innerHTML = '';
+
+      filtered.forEach(item => {
+        const carrier = CARRIERS[item.carrier] || CARRIERS.hepsijet;
+        const officialUrl = carrier.getUrl(item.trackingNumber);
+        const events = Array.isArray(item.events) ? item.events : [];
+        const isDelivered = item.status === 'delivered';
+
+        const card = document.createElement('div');
+        card.className = "bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-lg flex flex-col gap-3.5 transition-all hover:border-slate-600";
+
+        card.innerHTML = `
+          <!-- Üst Bar: Logo, Başlık, Takip Kodu, Silme -->
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${carrier.color} flex items-center justify-center text-white shrink-0 shadow-md">
+                <i class="${carrier.icon} text-lg"></i>
+              </div>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h4 class="font-bold text-sm text-slate-100 truncate">${item.title || carrier.name}</h4>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${carrier.badge}">
+                    ${carrier.name}
+                  </span>
+                </div>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <span class="font-mono text-xs text-indigo-400 font-semibold select-all">${item.trackingNumber}</span>
+                  <button onclick="copyToClipboard('${item.trackingNumber}')" class="text-slate-500 hover:text-slate-300 text-xs" title="Takip No Kopyala">
+                    <i class="fa-regular fa-copy"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button 
+                id="ref-btn-${item.id}"
+                onclick="refreshCargo('${item.id}')" 
+                class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
+                title="Resmi siteden kargo hareketlerini çek"
+              >
+                <i class="fa-solid fa-rotate"></i>
+                <span class="hidden sm:inline">Güncelle</span>
+              </button>
+              <button onclick="deleteShipment('${item.id}')" class="text-slate-500 hover:text-rose-400 p-2 text-sm transition" title="Sil">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Kargo Hareketleri (Otomatik Timeline) -->
+          <div class="bg-slate-900/80 rounded-xl p-3 border border-slate-800">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> Kargo Hareketleri (${events.length})
+              </span>
+              ${item.lastUpdated ? `<span class="text-[10px] text-slate-500">Son Güncelleme: ${formatDate(item.lastUpdated)}</span>` : ''}
+            </div>
+
+            ${events.length === 0 ? `
+              <div class="py-2.5 text-center text-[11px] text-slate-500">
+                Henüz hareket işlenmedi. Sağ üstteki "Güncelle" butonuna basarak kargo hareketlerini çekebilirsiniz.
+              </div>
+            ` : `
+              <div class="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                ${events.slice().reverse().map(ev => `
+                  <div class="flex items-start gap-2.5 text-xs border-l-2 border-indigo-500 pl-2.5 py-1">
+                    <div class="flex-1">
+                      <div class="font-medium text-slate-200">${ev.detail || 'İşlem'}</div>
+                      ${ev.location ? `<div class="text-[10px] text-slate-400 flex items-center gap-1"><i class="fa-solid fa-location-dot text-[9px] text-slate-500"></i> ${ev.location}</div>` : ''}
+                    </div>
+                    <span class="text-[10px] text-slate-500 font-mono shrink-0">${formatDate(ev.date)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+
+          <!-- Alt Çubuk: Durum & Orijinal Web Sayfası -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-700/60 text-xs">
+            <div class="flex items-center gap-2">
+              <label class="text-[11px] text-slate-400">Durum:</label>
+              <select onchange="updateStatus('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-semibold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'} focus:outline-none">
+                <option value="transit" ${item.status === 'transit' ? 'selected' : ''}>🚚 Yolda / Transferde</option>
+                <option value="out_for_delivery" ${item.status === 'out_for_delivery' ? 'selected' : ''}>🛵 Dağıtıma Çıktı</option>
+                <option value="delivered" ${item.status === 'delivered' ? 'selected' : ''}>✅ Teslim Edildi</option>
+                <option value="exception" ${item.status === 'exception' ? 'selected' : ''}>⚠️ Beklemede / Sorun</option>
+              </select>
+            </div>
+
+            <a 
+              href="${officialUrl}" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700/80 hover:bg-slate-700 text-slate-200 rounded-xl font-semibold transition text-xs shadow-sm"
+            >
+              <span>Resmi Sitede Canlı Gör</span>
+              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+            </a>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    const trackInput = document.getElementById('trackNumber');
+    const carrierSelect = document.getElementById('carrierSelect');
+    const detectBadge = document.getElementById('detectBadge');
+    const detectedName = document.getElementById('detectedName');
+    const submitBtn = document.getElementById('submitBtn');
+
+    trackInput.addEventListener('input', (e) => {
+      const code = e.target.value.trim();
+      const detected = detectCarrierSmart(code);
+      if (detected && CARRIERS[detected]) {
+        carrierSelect.value = detected;
+        detectedName.textContent = CARRIERS[detected].name;
+        detectBadge.classList.remove('hidden');
+      } else {
+        detectBadge.classList.add('hidden');
+      }
+    });
+
+    document.getElementById('pasteBtn').addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          trackInput.value = text.trim();
+          trackInput.dispatchEvent(new Event('input'));
+        }
+      } catch (err) {
+        alert("Pano okuma izni verilemedi, lütfen elle yapıştırın.");
+      }
+    });
+
+    document.getElementById('trackForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const code = trackInput.value.trim();
+      const carrier = carrierSelect.value;
+      const title = document.getElementById('trackTitle').value.trim();
+
+      if (!code) return;
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<i class="fa-solid fa-rotate animate-spin-custom"></i> Ekleniyor...`;
+
+      const newId = 'pkg_' + Date.now();
+      const newShipment = {
+        id: newId,
+        trackingNumber: code,
+        carrier: carrier,
+        title: title || '',
+        status: 'transit',
+        createdAt: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+        events: [
+          { detail: "Kargo takibe eklendi", location: "Sistem", date: new Date().toISOString() }
+        ]
+      };
+
+      // Önce hemen listeye ve yerel depoya ekle (donmayı ve gecikmeyi önler)
+      shipments.unshift(newShipment);
+      saveLocalShipments();
+      renderShipments();
+
+      trackInput.value = '';
+      document.getElementById('trackTitle').value = '';
+      detectBadge.classList.add('hidden');
+
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `<i class="fa-solid fa-plus"></i> Takip Listesine Ekle`;
+
+      // Arka planda Firebase'e ve canlı hareketlere git
+      if (db) {
+        db.collection('kargolar').doc(newId).set(newShipment).catch(console.error);
+      }
+
+      // Arka planda canlı hareket sorgula
+      const liveData = await fetchCargoEvents(carrier, code);
+      if (liveData && liveData.events && liveData.events.length > 0) {
+        newShipment.events = liveData.events;
+        newShipment.status = liveData.status || newShipment.status;
+        newShipment.lastUpdated = new Date().toISOString();
+        if (db) {
+          db.collection('kargolar').doc(newId).set(newShipment, { merge: true }).catch(console.error);
+        }
+        saveLocalShipments();
+        renderShipments();
+      }
+    });
+
+    window.updateStatus = function(id, newStatus) {
+      const item = shipments.find(s => s.id === id);
+      if (item) {
+        item.status = newStatus;
+        if (db) {
+          db.collection('kargolar').doc(id).update({ status: newStatus }).catch(console.error);
+        }
+        saveLocalShipments();
+        renderShipments();
+      }
+    };
+
+    window.deleteShipment = function(id) {
+      if (confirm('Bu kargoyu silmek istediğinize emin misiniz?')) {
+        shipments = shipments.filter(s => s.id !== id);
+        if (db) {
+          db.collection('kargolar').doc(id).delete().catch(console.error);
+        }
+        saveLocalShipments();
+        renderShipments();
+      }
+    };
+
+    window.copyToClipboard = function(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        alert("Takip numarası panoya kopyalandı: " + text);
+      });
+    };
+
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.filter-btn').forEach(b => {
+          b.className = "filter-btn px-2.5 py-1 rounded-lg text-slate-400 font-medium hover:text-white transition text-[11px]";
+        });
+        e.target.className = "filter-btn px-2.5 py-1 rounded-lg text-white font-medium bg-indigo-600 transition text-[11px]";
+        currentFilter = e.target.getAttribute('data-filter');
+        renderShipments();
+      });
+    });
+
+    // Başlat
+    listenFirestore();
+  </script>
+</body>
+</html>
