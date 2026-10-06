@@ -6,13 +6,19 @@
   <title>Kargolarım</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    .scroll-box::-webkit-scrollbar { width: 4px; }
+    .scroll-box::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    @keyframes spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .spinning { animation: spin-anim 0.8s linear infinite; }
+  </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col p-4 sm:p-6">
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col p-4 sm:p-6 pb-16">
 
-  <!-- Üst Başlık -->
+  <!-- Header -->
   <header class="max-w-2xl mx-auto w-full flex items-center justify-between pb-4 border-b border-slate-800">
     <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white">
+      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow">
         <i class="fa-solid fa-box text-lg"></i>
       </div>
       <div>
@@ -27,10 +33,10 @@
   <main class="max-w-2xl mx-auto w-full flex-1 flex flex-col gap-4 mt-4">
     
     <!-- Ekleme Formu -->
-    <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 flex flex-col gap-3">
+    <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 flex flex-col gap-3 shadow-lg">
       <div>
         <label class="text-xs font-semibold text-slate-400 block mb-1">Takip / Barkod No</label>
-        <input type="text" id="trackNum" placeholder="Örn: 62755239371505..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-mono uppercase focus:outline-none focus:border-indigo-500">
+        <input type="text" id="trackNum" placeholder="Örn: 62755239371505, 56249252156382..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-mono uppercase focus:outline-none focus:border-indigo-500">
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -71,6 +77,8 @@
   </main>
 
   <script>
+    const WORKER_URL = "https://crimson-mode-a7c6.mstmental.workers.dev";
+
     const URLS = {
       hepsijet: n => `https://hepsijet.com/gonderi-takibi/${encodeURIComponent(n)}`,
       surat: n => `https://suratkargo.com.tr/KargoTakip/?kargotakipno=${encodeURIComponent(n)}`,
@@ -95,6 +103,77 @@
       localStorage.setItem('kargolar_db_v1', JSON.stringify(items));
     }
 
+    // Doğrudan Tarayıcıdan HepsiJET Çekme
+    async function getHepsiJetMoves(code) {
+      try {
+        const res = await fetch(`https://website-backend.hepsijet.com/server/tms/webDeliveryTracking?customerDeliveryNo=${encodeURIComponent(code)}`);
+        if (!res.ok) return null;
+        const json = await res.json();
+        const data = json?.data?.[0];
+        if (!data) return null;
+
+        let status = 'transit';
+        if (data.deliveryStatus === 'DELIVERED' || (data.lastTransaction && data.lastTransaction.includes('Teslim'))) {
+          status = 'delivered';
+        }
+
+        let evs = [];
+        if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+          evs = data.transactions.map(t => ({
+            detail: t.transactionTypeDesc || t.operationStatus || data.lastTransaction || 'İşlem',
+            location: t.stationName || t.branchName || data.currentLocation || '',
+            date: t.transactionDate || t.createdDate || data.deliveredDate || ''
+          }));
+        } else if (data.lastTransaction) {
+          evs.push({
+            detail: data.lastTransaction,
+            location: data.currentLocation || data.arrivalBranch || 'Dağıtım Merkezi',
+            date: data.deliveredDate || ''
+          });
+        }
+        return { status, events: evs };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Sürat Kargo İçin Worker Çekme
+    async function getWorkerMoves(carrier, code) {
+      try {
+        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(code)}`);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    window.refreshCargo = async function(id) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      const btn = document.getElementById(`btn-ref-${id}`);
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-rotate spinning"></i>`;
+
+      let result = null;
+      if (item.carrier === 'hepsijet') {
+        result = await getHepsiJetMoves(item.code);
+      } else {
+        result = await getWorkerMoves(item.carrier, item.code);
+      }
+
+      if (result && Array.isArray(result.events) && result.events.length > 0) {
+        item.events = result.events;
+        item.status = result.status || item.status;
+        saveData();
+        render();
+      } else {
+        alert("Güncel hareket bilgisi alınamadı. Sağdaki 'Canlı Takip' butonundan kargonuzu doğrudan görebilirsiniz.");
+      }
+
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-rotate"></i>`;
+    };
+
     function render() {
       const box = document.getElementById('cardList');
       const empty = document.getElementById('emptyNotice');
@@ -111,9 +190,13 @@
 
       items.forEach(item => {
         const url = (URLS[item.carrier] || URLS.hepsijet)(item.code);
+        const events = Array.isArray(item.events) ? item.events : [];
+        const isDelivered = item.status === 'delivered';
+
         const card = document.createElement('div');
-        card.className = "bg-slate-800 border border-slate-700 rounded-xl p-3.5 flex flex-col gap-2.5";
+        card.className = "bg-slate-800 border border-slate-700 rounded-xl p-3.5 flex flex-col gap-3 shadow";
         card.innerHTML = `
+          <!-- Kart Üstü -->
           <div class="flex items-start justify-between">
             <div>
               <div class="flex items-center gap-2">
@@ -122,16 +205,47 @@
               </div>
               <div class="text-xs font-mono text-indigo-400 font-semibold mt-0.5 select-all">${item.code}</div>
             </div>
-            <button onclick="removeItem('${item.id}')" class="text-slate-500 hover:text-rose-400 p-1 text-sm">
-              <i class="fa-regular fa-trash-can"></i>
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button id="btn-ref-${item.id}" onclick="refreshCargo('${item.id}')" title="Hareketleri Güncelle" class="text-indigo-400 hover:text-white p-1 text-sm">
+                <i class="fa-solid fa-rotate"></i>
+              </button>
+              <button onclick="removeItem('${item.id}')" title="Sil" class="text-slate-500 hover:text-rose-400 p-1 text-sm">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </div>
           </div>
-          <div class="flex items-center justify-between pt-2 border-t border-slate-700/60 text-xs">
-            <select onchange="updateStat('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded p-1 text-xs">
+
+          <!-- Kargo Hareketleri Listesi -->
+          <div class="bg-slate-900/90 rounded-lg p-2.5 border border-slate-800 text-xs">
+            <div class="text-[11px] font-bold text-slate-400 mb-1.5 flex items-center justify-between">
+              <span><i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> Kargo Hareketleri (${events.length})</span>
+            </div>
+            ${events.length === 0 ? `
+              <div class="text-slate-500 text-[11px] py-1">
+                Hareketler henüz yüklenmedi. Yukarıdaki <i class="fa-solid fa-rotate"></i> simgesine basabilirsiniz.
+              </div>
+            ` : `
+              <div class="flex flex-col gap-1.5 max-h-36 overflow-y-auto scroll-box pr-1">
+                ${events.slice().reverse().map(ev => `
+                  <div class="border-l-2 border-indigo-500 pl-2 py-0.5">
+                    <div class="font-medium text-slate-200">${ev.detail}</div>
+                    <div class="text-[10px] text-slate-400 flex justify-between mt-0.5">
+                      <span>${ev.location || ''}</span>
+                      <span class="font-mono text-slate-500">${ev.date || ''}</span>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+
+          <!-- Kart Altı -->
+          <div class="flex items-center justify-between pt-1 border-t border-slate-700/60 text-xs">
+            <select onchange="updateStat('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded p-1 text-xs font-semibold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'}">
               <option value="transit" ${item.status === 'transit' ? 'selected' : ''}>🚚 Yolda</option>
               <option value="delivered" ${item.status === 'delivered' ? 'selected' : ''}>✅ Teslim Edildi</option>
             </select>
-            <a href="${url}" target="_blank" class="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1">
+            <a href="${url}" target="_blank" class="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 shadow">
               <span>Canlı Takip</span>
               <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
             </a>
@@ -153,19 +267,24 @@
         return;
       }
 
-      items.unshift({
+      const newItem = {
         id: 'c_' + Date.now(),
         code: code,
         carrier: carrierEl.value,
         title: titleEl.value.trim(),
-        status: 'transit'
-      });
+        status: 'transit',
+        events: []
+      };
 
+      items.unshift(newItem);
       saveData();
       render();
 
       codeEl.value = '';
       titleEl.value = '';
+
+      // Eklendiği an otomatik hareketleri sorgula
+      refreshCargo(newItem.id);
     });
 
     window.removeItem = function(id) {
@@ -179,6 +298,7 @@
       if (it) {
         it.status = val;
         saveData();
+        render();
       }
     };
 
