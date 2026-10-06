@@ -40,10 +40,6 @@
       animation: spin-custom 0.8s linear infinite;
     }
   </style>
-
-  <!-- Firebase Scripts (Opsiyonel Arka Plan Senkronizasyonu) -->
-  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen flex flex-col font-sans pb-12">
 
@@ -65,7 +61,7 @@
         </div>
       </div>
       <div class="text-xs font-mono bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60">
-        <span id="syncStatus" class="text-emerald-400 font-semibold">Aktif ✓</span>
+        <span class="text-emerald-400 font-semibold">Aktif ✓</span>
       </div>
     </div>
   </header>
@@ -170,7 +166,7 @@
 
   <script>
     const WORKER_URL = "https://crimson-mode-a7c6.mstmental.workers.dev";
-    const STORAGE_KEY = "kargolarim_kalici_depo_v4";
+    const STORAGE_KEY = "kargolarim_kalici_depo_v5";
 
     const CARRIERS = {
       hepsijet: {
@@ -243,7 +239,6 @@
     let shipments = [];
     let currentFilter = 'all';
 
-    // 1. Önce doğrudan yerel depodan oku (Sıfır bekleme, anında ekranda)
     function loadShipments() {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
@@ -262,20 +257,79 @@
       } catch (e) {}
     }
 
-    // 2. Worker üzerinden kargo hareketlerini çek
-    async function fetchFromWorker(carrier, code) {
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(code)}`, {
-          signal: controller.signal
-        });
-        clearTimeout(tid);
-        if (!res.ok) return null;
-        return await res.json();
-      } catch (e) {
-        return null;
+    // 1. HepsiJET İçin Doğrudan Tarayıcıdan Çekim (WAF Engelini Aşar)
+    async function fetchHepsiJetDirect(code) {
+      const url = `https://website-backend.hepsijet.com/server/tms/webDeliveryTracking?customerDeliveryNo=${encodeURIComponent(code)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HepsiJET API yanıt vermedi");
+      const json = await res.json();
+      const item = json?.data?.[0];
+      if (!item) throw new Error("Kayıt bulunamadı");
+
+      let currentStatus = 'transit';
+      const dStatus = String(item.deliveryStatus || '').toUpperCase();
+      const lastTx = String(item.lastTransaction || '').toLowerCase();
+
+      if (dStatus === 'DELIVERED' || lastTx.includes('teslim')) {
+        currentStatus = 'delivered';
+      } else if (dStatus.includes('DELIVERY') || lastTx.includes('dağıtım') || lastTx.includes('kurye')) {
+        currentStatus = 'out_for_delivery';
       }
+
+      let events = [];
+      const txList = item.transactions || item.deliveryEvents || [];
+      if (Array.isArray(txList) && txList.length > 0) {
+        events = txList.map(t => ({
+          detail: t.transactionTypeDesc || t.operationStatus || t.description || t.transactionType || item.lastTransaction || 'Kargo Hareketi',
+          location: t.stationName || t.branchName || t.location || item.currentLocation || item.arrivalBranch || '',
+          date: t.transactionDate || t.createdDate || t.eventDate || t.date || item.deliveredDate || ''
+        }));
+      }
+
+      // Detay dizisi gelmezse doğrudan kartın alanlarından timeline üret
+      if (events.length === 0) {
+        if (item.lastTransaction) {
+          events.push({
+            detail: item.lastTransaction,
+            location: item.currentLocation || item.arrivalBranch || 'Dağıtım Merkezi',
+            date: item.deliveredDate || item.deliveryDateCurrent || new Date().toISOString()
+          });
+        }
+        if (item.arrivalBranch && item.lastTransaction !== 'Teslim Edildi') {
+          events.push({
+            detail: 'Varış Şubesinde',
+            location: item.arrivalBranch,
+            date: item.deliveryDateOriginal || ''
+          });
+        }
+      }
+
+      return { status: currentStatus, events: events };
+    }
+
+    // 2. Diğer Kargo Firmaları İçin Worker Üzerinden Çekim
+    async function fetchFromWorker(carrier, code) {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(code)}`, {
+        signal: controller.signal
+      });
+      clearTimeout(tid);
+      if (!res.ok) return null;
+      return await res.json();
+    }
+
+    // Ortak Sorgu Fonksiyonu
+    async function fetchCargoData(carrier, code) {
+      if (carrier === 'hepsijet') {
+        try {
+          return await fetchHepsiJetDirect(code);
+        } catch (e) {
+          console.warn("Doğrudan HepsiJET çağrısı başarısız, Worker deneniyor...", e);
+          return await fetchFromWorker(carrier, code);
+        }
+      }
+      return await fetchFromWorker(carrier, code);
     }
 
     window.refreshCargo = async function(id) {
@@ -289,7 +343,7 @@
       }
 
       try {
-        const res = await fetchFromWorker(item.carrier, item.trackingNumber);
+        const res = await fetchCargoData(item.carrier, item.trackingNumber);
         if (res && Array.isArray(res.events) && res.events.length > 0) {
           item.events = res.events;
           item.status = res.status || item.status;
@@ -298,10 +352,10 @@
           saveShipments();
           renderShipments();
         } else {
-          alert("Kargo sitesinden anlık yeni hareket alınamadı.");
+          alert("Kargo sitesinden anlık yeni hareket bilgisi alınamadı.");
         }
       } catch (e) {
-        console.warn(e);
+        alert("Bağlantı hatası: " + e.message);
       } finally {
         if (btn) {
           btn.innerHTML = `<i class="fa-solid fa-rotate"></i> <span class="hidden sm:inline">Güncelle</span>`;
@@ -496,7 +550,6 @@
         ]
       };
 
-      // 1. Önce belleğe ve ekrana kesin yaz
       shipments.unshift(newShipment);
       saveShipments();
       renderShipments();
@@ -505,8 +558,8 @@
       document.getElementById('trackTitle').value = '';
       detectBadge.classList.add('hidden');
 
-      // 2. Arka planda hareketleri çek
-      fetchFromWorker(carrier, code).then(live => {
+      // Arka planda doğrudan/worker üzerinden hareketleri çek
+      fetchCargoData(carrier, code).then(live => {
         if (live && Array.isArray(live.events) && live.events.length > 0) {
           newShipment.events = live.events;
           newShipment.status = live.status || newShipment.status;
@@ -515,7 +568,7 @@
           saveShipments();
           renderShipments();
         }
-      });
+      }).catch(console.warn);
     });
 
     window.updateStatus = function(id, newStatus) {
@@ -552,7 +605,6 @@
       });
     });
 
-    // Başlat
     loadShipments();
   </script>
 </body>
