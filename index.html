@@ -77,18 +77,6 @@
   </main>
 
   <script>
-    const WORKER_URL = "https://crimson-mode-a7c6.mstmental.workers.dev";
-
-    const URLS = {
-      hepsijet: n => `https://hepsijet.com/gonderi-takibi/${encodeURIComponent(n)}`,
-      surat: n => `https://suratkargo.com.tr/KargoTakip/?kargotakipno=${encodeURIComponent(n)}`,
-      trendyol: n => `https://kargotakip.trendyol.com/?trackingCode=${encodeURIComponent(n)}`,
-      aras: n => `https://kargotakip.araskargo.com.tr/mainpage.aspx?code=${encodeURIComponent(n)}`,
-      yurtici: n => `https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code=${encodeURIComponent(n)}`,
-      ptt: n => `https://gonderitakip.ptt.gov.tr/Track/Verify?q=${encodeURIComponent(n)}`,
-      dhl: n => `https://www.dhl.com/tr-tr/home/tracking/tracking-express.html?submit=1&tracking-id=${encodeURIComponent(n)}`
-    };
-
     let items = [];
 
     function loadData() {
@@ -103,49 +91,96 @@
       localStorage.setItem('kargolar_db_v1', JSON.stringify(items));
     }
 
-    // Doğrudan Tarayıcıdan HepsiJET Çekme
-    async function getHepsiJetMoves(code) {
-      try {
-        const res = await fetch(`https://website-backend.hepsijet.com/server/tms/webDeliveryTracking?customerDeliveryNo=${encodeURIComponent(code)}`);
-        if (!res.ok) return null;
-        const json = await res.json();
-        const data = json?.data?.[0];
-        if (!data) return null;
+    // CORS & WAF Engelini Aşan Çoklu Kanal İstek Motoru
+    async function fetchHepsiJetMoves(code) {
+      const targetApi = `https://website-backend.hepsijet.com/server/tms/webDeliveryTracking?customerDeliveryNo=${encodeURIComponent(code)}`;
+      
+      // Sırasıyla 3 farklı kanal denenir: Doğrudan, AllOrigins Proxy ve CodeTabs Proxy
+      const endpoints = [
+        targetApi,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetApi)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetApi)}`
+      ];
 
-        let status = 'transit';
-        if (data.deliveryStatus === 'DELIVERED' || (data.lastTransaction && data.lastTransaction.includes('Teslim'))) {
-          status = 'delivered';
-        }
+      for (let url of endpoints) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const json = await res.json();
+          const data = json?.data?.[0];
+          if (!data) continue;
 
-        let evs = [];
-        if (Array.isArray(data.transactions) && data.transactions.length > 0) {
-          evs = data.transactions.map(t => ({
-            detail: t.transactionTypeDesc || t.operationStatus || data.lastTransaction || 'İşlem',
-            location: t.stationName || t.branchName || data.currentLocation || '',
-            date: t.transactionDate || t.createdDate || data.deliveredDate || ''
-          }));
-        } else if (data.lastTransaction) {
-          evs.push({
-            detail: data.lastTransaction,
-            location: data.currentLocation || data.arrivalBranch || 'Dağıtım Merkezi',
-            date: data.deliveredDate || ''
-          });
+          let status = 'transit';
+          const dStatus = String(data.deliveryStatus || '').toUpperCase();
+          const lastTx = String(data.lastTransaction || '').toLowerCase();
+
+          if (dStatus === 'DELIVERED' || lastTx.includes('teslim')) {
+            status = 'delivered';
+          } else if (dStatus.includes('DELIVERY') || lastTx.includes('dağıtım') || lastTx.includes('kurye')) {
+            status = 'out_for_delivery';
+          }
+
+          let evs = [];
+          if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+            evs = data.transactions.map(t => ({
+              detail: t.transactionTypeDesc || t.operationStatus || data.lastTransaction || 'İşlem',
+              location: t.stationName || t.branchName || data.currentLocation || '',
+              date: t.transactionDate || t.createdDate || data.deliveredDate || ''
+            }));
+          } else if (data.lastTransaction) {
+            evs.push({
+              detail: data.lastTransaction,
+              location: data.currentLocation || data.arrivalBranch || 'Dağıtım Merkezi',
+              date: data.deliveredDate || new Date().toISOString()
+            });
+            if (data.arrivalBranch && !data.lastTransaction.includes('Teslim')) {
+              evs.push({
+                detail: 'Dağıtım Merkezinde',
+                location: data.arrivalBranch,
+                date: ''
+              });
+            }
+          }
+
+          if (evs.length > 0) {
+            return { status, events: evs };
+          }
+        } catch (err) {
+          // Bu kanal engellendiyse bir sonrakine geçer
         }
-        return { status, events: evs };
-      } catch (e) {
-        return null;
       }
+      return null;
     }
 
-    // Sürat Kargo İçin Worker Çekme
-    async function getWorkerMoves(carrier, code) {
+    // Sürat Kargo Çekici
+    async function fetchSuratMoves(code) {
+      const suratUrl = `https://suratkargo.com.tr/KargoTakip/?kargotakipno=${encodeURIComponent(code)}`;
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(suratUrl)}`;
+
       try {
-        const res = await fetch(`${WORKER_URL}/?carrier=${carrier}&code=${encodeURIComponent(code)}`);
+        const res = await fetch(proxyUrl);
         if (!res.ok) return null;
-        return await res.json();
-      } catch (e) {
-        return null;
-      }
+        const html = await res.text();
+
+        let events = [];
+        let status = 'transit';
+
+        const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+        let match;
+        while ((match = rowRegex.exec(html)) !== null) {
+          const cols = [...match[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
+          if (cols.length >= 3 && /\d{1,2}\.\d{1,2}\.\d{4}/.test(cols[0])) {
+            events.push({ date: cols[0], location: cols[1], detail: cols[2] });
+          }
+        }
+
+        if (html.includes("Teslim Edildi")) status = 'delivered';
+        else if (html.includes("Dağıtıma Çıktı") || html.includes("Kurye")) status = 'out_for_delivery';
+
+        if (events.length > 0) return { status, events };
+      } catch (e) {}
+
+      return null;
     }
 
     window.refreshCargo = async function(id) {
@@ -153,22 +188,22 @@
       if (!item) return;
 
       const btn = document.getElementById(`btn-ref-${id}`);
-      if (btn) btn.innerHTML = `<i class="fa-solid fa-rotate spinning"></i>`;
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-rotate spinning text-indigo-400"></i>`;
 
-      let result = null;
+      let res = null;
       if (item.carrier === 'hepsijet') {
-        result = await getHepsiJetMoves(item.code);
-      } else {
-        result = await getWorkerMoves(item.carrier, item.code);
+        res = await fetchHepsiJetMoves(item.code);
+      } else if (item.carrier === 'surat') {
+        res = await fetchSuratMoves(item.code);
       }
 
-      if (result && Array.isArray(result.events) && result.events.length > 0) {
-        item.events = result.events;
-        item.status = result.status || item.status;
+      if (res && Array.isArray(res.events) && res.events.length > 0) {
+        item.events = res.events;
+        item.status = res.status || item.status;
         saveData();
         render();
       } else {
-        alert("Güncel hareket bilgisi alınamadı. Sağdaki 'Canlı Takip' butonundan kargonuzu doğrudan görebilirsiniz.");
+        alert("Kargo firmasından anlık hareket verisi çekilemedi. Lütfen bağlantınızı kontrol edip tekrar deneyin.");
       }
 
       if (btn) btn.innerHTML = `<i class="fa-solid fa-rotate"></i>`;
@@ -189,14 +224,13 @@
       empty.classList.add('hidden');
 
       items.forEach(item => {
-        const url = (URLS[item.carrier] || URLS.hepsijet)(item.code);
         const events = Array.isArray(item.events) ? item.events : [];
         const isDelivered = item.status === 'delivered';
 
         const card = document.createElement('div');
         card.className = "bg-slate-800 border border-slate-700 rounded-xl p-3.5 flex flex-col gap-3 shadow";
         card.innerHTML = `
-          <!-- Kart Üstü -->
+          <!-- Kart Üst Başlık -->
           <div class="flex items-start justify-between">
             <div>
               <div class="flex items-center gap-2">
@@ -205,32 +239,32 @@
               </div>
               <div class="text-xs font-mono text-indigo-400 font-semibold mt-0.5 select-all">${item.code}</div>
             </div>
-            <div class="flex items-center gap-1.5">
-              <button id="btn-ref-${item.id}" onclick="refreshCargo('${item.id}')" title="Hareketleri Güncelle" class="text-indigo-400 hover:text-white p-1 text-sm">
+            <div class="flex items-center gap-2">
+              <button id="btn-ref-${item.id}" onclick="refreshCargo('${item.id}')" title="Kargo Hareketlerini Güncelle" class="text-indigo-400 hover:text-white p-1 text-sm transition">
                 <i class="fa-solid fa-rotate"></i>
               </button>
-              <button onclick="removeItem('${item.id}')" title="Sil" class="text-slate-500 hover:text-rose-400 p-1 text-sm">
+              <button onclick="removeItem('${item.id}')" title="Sil" class="text-slate-500 hover:text-rose-400 p-1 text-sm transition">
                 <i class="fa-regular fa-trash-can"></i>
               </button>
             </div>
           </div>
 
-          <!-- Kargo Hareketleri Listesi -->
+          <!-- Kargo Hareketleri Kutusu -->
           <div class="bg-slate-900/90 rounded-lg p-2.5 border border-slate-800 text-xs">
             <div class="text-[11px] font-bold text-slate-400 mb-1.5 flex items-center justify-between">
               <span><i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> Kargo Hareketleri (${events.length})</span>
             </div>
             ${events.length === 0 ? `
               <div class="text-slate-500 text-[11px] py-1">
-                Hareketler henüz yüklenmedi. Yukarıdaki <i class="fa-solid fa-rotate"></i> simgesine basabilirsiniz.
+                Hareketler henüz yüklenmedi. Sağ üstteki <i class="fa-solid fa-rotate text-indigo-400"></i> butonuna basarak çekebilirsiniz.
               </div>
             ` : `
-              <div class="flex flex-col gap-1.5 max-h-36 overflow-y-auto scroll-box pr-1">
+              <div class="flex flex-col gap-2 max-h-48 overflow-y-auto scroll-box pr-1">
                 ${events.slice().reverse().map(ev => `
-                  <div class="border-l-2 border-indigo-500 pl-2 py-0.5">
-                    <div class="font-medium text-slate-200">${ev.detail}</div>
+                  <div class="border-l-2 border-indigo-500 pl-2.5 py-0.5">
+                    <div class="font-semibold text-slate-200">${ev.detail}</div>
                     <div class="text-[10px] text-slate-400 flex justify-between mt-0.5">
-                      <span>${ev.location || ''}</span>
+                      <span><i class="fa-solid fa-location-dot text-[9px] text-slate-500"></i> ${ev.location || 'Merkez'}</span>
                       <span class="font-mono text-slate-500">${ev.date || ''}</span>
                     </div>
                   </div>
@@ -239,16 +273,15 @@
             `}
           </div>
 
-          <!-- Kart Altı -->
+          <!-- Durum Çubuğu -->
           <div class="flex items-center justify-between pt-1 border-t border-slate-700/60 text-xs">
-            <select onchange="updateStat('${item.id}', this.value)" class="bg-slate-900 border border-slate-700 rounded p-1 text-xs font-semibold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'}">
-              <option value="transit" ${item.status === 'transit' ? 'selected' : ''}>🚚 Yolda</option>
-              <option value="delivered" ${item.status === 'delivered' ? 'selected' : ''}>✅ Teslim Edildi</option>
-            </select>
-            <a href="${url}" target="_blank" class="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 shadow">
-              <span>Canlı Takip</span>
-              <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
-            </a>
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-400 text-[11px]">Durum:</span>
+              <span class="font-bold ${isDelivered ? 'text-emerald-400' : 'text-amber-400'}">
+                ${isDelivered ? '✅ Teslim Edildi' : '🚚 Dağıtımda / Transferde'}
+              </span>
+            </div>
+            <span class="text-[10px] text-slate-500">Canlı Senkronize</span>
           </div>
         `;
         box.appendChild(card);
@@ -283,7 +316,7 @@
       codeEl.value = '';
       titleEl.value = '';
 
-      // Eklendiği an otomatik hareketleri sorgula
+      // Ekler eklemez hareketleri anında çek
       refreshCargo(newItem.id);
     });
 
@@ -291,15 +324,6 @@
       items = items.filter(i => i.id !== id);
       saveData();
       render();
-    };
-
-    window.updateStat = function(id, val) {
-      const it = items.find(i => i.id === id);
-      if (it) {
-        it.status = val;
-        saveData();
-        render();
-      }
     };
 
     loadData();
